@@ -1,15 +1,33 @@
 #!/usr/bin/env python
 
 import argparse
-import httplib
 import json
 import random
 import threading
 import string
-import StringIO
 import time
 import unittest
 import uuid
+
+# Logger
+import logging
+logging.basicConfig()
+logger = logging.getLogger()
+
+# Python version check
+import sys
+
+if sys.version_info[0] <= 2:
+    import httplib
+    import urlparse
+    import StringIO
+
+elif sys.version_info[0] >= 3:
+    import http.client as httplib
+    from io import StringIO
+
+else:
+    logger.warn("Unexpected Python version", sys.version_info())
 
 # Global variables set from options and used in unit tests
 # (since it's hard to parameterize tests in Python 2)
@@ -37,6 +55,17 @@ def describe_exception(e):
 
 class Response(object): pass
 
+def search_header_tuple(headers, header_name):
+    if sys.version_info[0] <= 2:
+        header_name = header_name.lower()
+    elif sys.version_info[0] >= 3:
+        pass
+
+    for key, value in headers:
+        if key == header_name:
+            return value
+    return None
+
 def do_request(host_port, method, url, body=None, accept_statuses=[200]):
     def describe_request():
         return "%s %s%s" % (method, host_port, url)
@@ -59,7 +88,8 @@ def do_request(host_port, method, url, body=None, accept_statuses=[200]):
 
     conn.close()
 
-    if ("content-type", "application/json") in headers:
+    content_type = search_header_tuple(headers, "Content-type")
+    if content_type == "application/json":
         try:
             body = json.loads(body)
         except Exception as e:
@@ -68,6 +98,9 @@ def do_request(host_port, method, url, body=None, accept_statuses=[200]):
                     + describe_exception(e)
                     + " --- Body start: "
                     + body[:30])
+
+    if content_type == "text/plain" and sys.version_info[0] >= 3:
+        body = body.decode()
 
     r2 = Response()
     r2.status = status
@@ -99,18 +132,25 @@ class SimpleApiCheck(unittest.TestCase):
 
     def test_node_info_json(self):
         r = do_request(self.node, "GET", "/node-info")
-        self.assertIn(("content-type", "application/json"), r.headers,
-                "Headers should specify Content-Type: application/json")
+
+        content_type = search_header_tuple(r.headers, "Content-type")
+        self.assertEqual(content_type, "application/json",
+                    "Headers should specify Content-Type: application/json")
 
         self.assertIn("node_key", r.body)
         self.assertIn("successor", r.body)
         self.assertIn("others", r.body)
         self.assertIn("sim_crash", r.body)
 
-        if not isinstance(r.body["node_key"], int):
-            self.assertIsInstance(r.body["node_key"], unicode)
+        if sys.version_info[0] <= 2:
+            json_str_type = unicode
+        if sys.version_info[0] >= 3:
+            json_str_type = str
 
-        self.assertIsInstance(r.body["successor"], unicode)
+        if not isinstance(r.body["node_key"], int):
+            self.assertIsInstance(r.body["node_key"], json_str_type)
+
+        self.assertIsInstance(r.body["successor"], json_str_type)
         self.assertIsInstance(r.body["others"], list)
         self.assertIsInstance(r.body["sim_crash"], bool)
 

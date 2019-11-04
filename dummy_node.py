@@ -1,14 +1,30 @@
 #!/usr/bin/env python
 import argparse
-import httplib
 import json
 import re
 import signal
 import socket
 import threading
-import urlparse
 
-from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
+# Logger
+import logging
+logging.basicConfig()
+logger = logging.getLogger()
+
+# Python version check
+import sys
+
+if sys.version_info[0] <= 2:
+    import httplib
+    import urlparse
+    from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
+
+elif sys.version_info[0] >= 3:
+    import http.client as httplib
+    from http.server import BaseHTTPRequestHandler,HTTPServer
+
+else:
+    logger.warn("Unexpected Python version", sys.version_info())
 
 # Assignment 1 node properties
 object_store = {}
@@ -28,6 +44,8 @@ class NodeHttpHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', content_type)
         self.send_header('Content-length',len(content))
         self.end_headers()
+        if sys.version_info[0] >= 3 and isinstance(content, str):
+            content = content.encode()
         self.wfile.write(content)
 
     def extract_key_from_path(self, path):
@@ -35,7 +53,10 @@ class NodeHttpHandler(BaseHTTPRequestHandler):
 
 
     def do_PUT(self):
-        content_length = int(self.headers.getheader('content-length', 0))
+        if sys.version_info[0] <= 2:
+            content_length = int(self.headers.getheader('content-length', 0))
+        else:
+            content_length = int(self.headers.get('content-length', 0))
 
         key = self.extract_key_from_path(self.path)
         value = self.rfile.read(content_length)
@@ -130,6 +151,9 @@ if __name__ == "__main__":
     node_name = "{}:{}".format(socket.gethostname(), args.port)
     node_key = hash(node_name)
 
+    logger = logging.getLogger(node_name)
+    logger.setLevel(logging.INFO)
+
     if len(args.neighbours) == 0:
         successor = node_name
 
@@ -140,12 +164,12 @@ if __name__ == "__main__":
     neighbours = args.neighbours
 
     def run_server():
-        print "Starting server on port" , args.port
+        logger.info("Starting server on port %d" , args.port)
         server.serve_forever()
-        print "Server has shut down"
+        logger.info("Server has shut down")
 
     def shutdown_server_on_signal(signum, frame):
-        print "We get signal (%s). Asking server to shut down" % signum
+        logger.info("We get signal (%s). Asking server to shut down", signum)
         server.shutdown()
 
     # Start server in a new thread, because server HTTPServer.serve_forever()
@@ -169,7 +193,7 @@ if __name__ == "__main__":
     # able to kill it with kill -9.
     thread.join(args.die_after_seconds)
     if thread.isAlive():
-        print "Reached %.3f second timeout. Asking server to shut down" % args.die_after_seconds
+        logger.info("Reached %.3f second timeout. Asking server to shut down", args.die_after_seconds)
         server.shutdown()
 
-    print "Exited cleanly"
+    logger.info("Exited cleanly")
